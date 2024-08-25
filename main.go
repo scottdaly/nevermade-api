@@ -33,7 +33,12 @@ func init() {
 		},
 		Endpoint: google.Endpoint,
 	}
+	var clientId = os.Getenv("GOOGLE_CLIENT_ID");
+	log.Println("clientId", clientId);
 }
+
+
+
 
 func createTables() {
 	_, err := db.Exec(`
