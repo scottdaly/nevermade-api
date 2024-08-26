@@ -26,7 +26,7 @@ jobs:
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
           SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
-          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+          SERVER_DEPLOY_PATH: /opt/nevermade/nevermade-api
         run: |
           mkdir -p ~/.ssh
           echo "$SERVER_SSH_KEY" > ~/.ssh/server.key
