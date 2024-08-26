@@ -1,33 +1,37 @@
-name: Deploy Go API
+name: Deploy to Server
 
 on:
   push:
-    branches:
-      - main # or your default branch name
+    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-
-      - name: Set up SSH
-        uses: webfactory/ssh-agent@v0.5.0
-        with:
-          ssh-private-key: ${{ secrets.SERVER_SSH_KEY }}
+      - uses: actions/checkout@v2
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v2
         with:
-          go-version: "1.23" # or your Go version
+          go-version: 1.20 # Adjust this to your Go version
 
-      - name: Build and Deploy
-        run: |
-          cd /opt/nevermade/nevermade-api
-          git pull origin main
-          go build -o nevermade-api
-          sudo systemctl restart nevermade-api
+      - name: Build
+        run: go build -v ./...
 
-      - name: Check service status
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Deploy to server
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
+          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
-          sudo systemctl status nevermade-api
+          mkdir -p ~/.ssh
+          echo "$SERVER_SSH_KEY" > ~/.ssh/server.key
+          chmod 600 ~/.ssh/server.key
+          ssh -i ~/.ssh/server.key -o StrictHostKeyChecking=no $SERVER_USERNAME@$SERVER_HOST << EOF
+            cd $SERVER_DEPLOY_PATH
+            ./deploy.sh
+          EOF
