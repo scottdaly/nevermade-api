@@ -143,7 +143,6 @@ func handleGoogleCallback(c *gin.Context) {
 // 	return &userInfo, nil
 // }
 
-
 func getOrCreateUser(googleID, name string) (*User, error) {
 	var user User
 	err := db.QueryRow("SELECT id, google_id, name FROM users WHERE google_id = ?", googleID).Scan(&user.ID, &user.GoogleID, &user.Name)
