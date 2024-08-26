@@ -83,15 +83,16 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// Define routes
-	r.GET("/auth/google/login", handleGoogleLogin)
-	r.GET("/auth/google/callback", handleGoogleCallback)
-	r.POST("/character", createCharacter)
-	r.GET("/characters", getCharacters)
-	r.POST("/chat", chatWithCharacter)
+// Define routes
+r.GET("/auth/google/login", handleGoogleLogin)
+r.POST("/auth/google/callback", handleGoogleCallback)
+r.POST("/character", createCharacter)
+r.GET("/characters", getCharacters)
+r.POST("/chat", chatWithCharacter)
 
-	// Run the server
-	r.Run(":8080")
+// Run the server
+r.Run(":8080")
+
 }
 
 func handleGoogleLogin(c *gin.Context) {
