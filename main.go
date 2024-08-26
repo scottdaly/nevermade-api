@@ -91,6 +91,7 @@ func main() {
 
 // Define routes
 r.GET("/auth/google/login", handleGoogleLogin)
+r.GET("/test", handleTest)
 r.POST("/auth/google/callback", handleGoogleCallback)
 r.POST("/character", createCharacter)
 r.GET("/characters", getCharacters)
@@ -104,6 +105,10 @@ log.Printf("Starting server on :8080")
 if err := r.Run(":8080"); err != nil {
 	log.Fatalf("Failed to start server: %v", err)
 }
+}
+
+func handleTest(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"message": "Test successful"})
 }
 
 func handleGoogleLogin(c *gin.Context) {
