@@ -160,7 +160,6 @@ func handleGoogleCallback(c *gin.Context) {
     c.JSON(http.StatusOK, response)
 }
 
-
 // func getUserInfo(client *http.Client) (*UserInfo, error) {
 // 	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
 // 	if err != nil {
