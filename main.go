@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -36,6 +34,9 @@ func init() {
 		Endpoint: google.Endpoint,
 	}
 }
+
+
+
 
 func createTables() {
 	_, err := db.Exec(`
@@ -70,97 +71,89 @@ func main() {
 	createTables()
 
 	// Initialize Gin router
-	r := gin.New()
-	r.Use(gin.Logger())
-	r.Use(gin.Recovery())
+	r := gin.Default()
+
+	    // Add request logging middleware
+		r.Use(func(c *gin.Context) {
+			log.Printf("Received request: %s %s", c.Request.Method, c.Request.URL.Path)
+			c.Next()
+		})
 
 	// Add CORS middleware
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://nevermade.co"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
-	}))
+    r.Use(cors.New(cors.Config{
+        AllowOrigins:     []string{"https://nevermade.co"},
+        AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+        AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+        ExposeHeaders:    []string{"Content-Length"},
+        AllowCredentials: true,
+        MaxAge:           12 * time.Hour,
+    }))
 
-	// Add custom logging middleware
-	r.Use(func(c *gin.Context) {
-		// Log request details
-		log.Printf("Received request: %s %s", c.Request.Method, c.Request.URL.Path)
-		log.Printf("Headers: %v", c.Request.Header)
+// Define routes
+r.GET("/auth/google/login", handleGoogleLogin)
+r.POST("/auth/google/callback", handleGoogleCallback)
+r.POST("/character", createCharacter)
+r.GET("/characters", getCharacters)
+r.POST("/chat", chatWithCharacter)
+r.NoRoute(func(c *gin.Context) {
+	log.Printf("No route found for %s %s", c.Request.Method, c.Request.URL.Path)
+	c.JSON(404, gin.H{"error": "Route not found"})
+})
 
-		// Read and log request body
-		body, _ := io.ReadAll(c.Request.Body)
-		log.Printf("Request body: %s", string(body))
+log.Printf("Starting server on :8080")
+if err := r.Run(":8080"); err != nil {
+	log.Fatalf("Failed to start server: %v", err)
+}
+}
 
-		// Restore the body to the request
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
-
-		// Continue processing the request
-		c.Next()
-
-		// Log response details
-		log.Printf("Response status: %d", c.Writer.Status())
-	})
-
-	// Define routes
-	r.POST("/auth/google/callback", handleGoogleCallback)
-	r.POST("/character", createCharacter)
-	r.GET("/characters", getCharacters)
-	r.POST("/chat", chatWithCharacter)
-
-	// Add catch-all route for debugging
-	r.NoRoute(func(c *gin.Context) {
-		log.Printf("No route found for %s %s", c.Request.Method, c.Request.URL.Path)
-		c.JSON(404, gin.H{"error": "Route not found"})
-	})
-
-	log.Printf("Starting server on :8080")
-	if err := r.Run(":8080"); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
-	}
+func handleGoogleLogin(c *gin.Context) {
+	url := config.AuthCodeURL("state", oauth2.AccessTypeOffline)
+	c.Redirect(http.StatusTemporaryRedirect, url)
 }
 
 func handleGoogleCallback(c *gin.Context) {
-	log.Printf("Handling Google callback")
+    log.Printf("Handling Google callback")
+    
+    var request struct {
+        IDToken string `json:"idToken"`
+    }
 
-	var request struct {
-		IDToken string `json:"idToken"`
-	}
+    if err := c.BindJSON(&request); err != nil {
+        log.Printf("Error binding JSON: %v", err)
+        log.Printf("Request body: %v", c.Request.Body)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+        return
+    }
 
-	if err := c.BindJSON(&request); err != nil {
-		log.Printf("Error binding JSON: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		return
-	}
+    log.Printf("Received ID token: %s", request.IDToken)
 
-	log.Printf("Received ID token: %s", request.IDToken)
+    // Verify the ID token
+    payload, err := idtoken.Validate(context.Background(), request.IDToken, os.Getenv("GOOGLE_CLIENT_ID"))
+    if err != nil {
+        log.Printf("Error validating ID token: %v", err)
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid ID token"})
+        return
+    }
 
-	// Verify the ID token
-	payload, err := idtoken.Validate(context.Background(), request.IDToken, os.Getenv("GOOGLE_CLIENT_ID"))
-	if err != nil {
-		log.Printf("Error validating ID token: %v", err)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid ID token"})
-		return
-	}
+    // Extract user information from the payload
+    googleID := payload.Subject
+    name, _ := payload.Claims["name"].(string)
 
-	// Extract user information from the payload
-	googleID := payload.Subject
-	name, _ := payload.Claims["name"].(string)
+    log.Printf("Google ID: %s, Name: %s", googleID, name)
 
-	// Check if user exists, if not, create new user
-	user, err := getOrCreateUser(googleID, name)
-	if err != nil {
-		log.Printf("Error getting or creating user: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process user"})
-		return
-	}
+    // Check if user exists, if not, create new user
+    user, err := getOrCreateUser(googleID, name)
+    if err != nil {
+        log.Printf("Error getting or creating user: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process user"})
+        return
+    }
 
-	response := gin.H{"userId": user.ID}
-	log.Printf("Sending response: %+v", response)
-	c.JSON(http.StatusOK, response)
+    response := gin.H{"userId": user.ID}
+    log.Printf("Sending response: %+v", response)
+    c.JSON(http.StatusOK, response)
 }
+
 
 // func getUserInfo(client *http.Client) (*UserInfo, error) {
 // 	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
@@ -214,6 +207,7 @@ type User struct {
 	GoogleID string
 	Name     string
 }
+
 
 func createCharacter(c *gin.Context) {
 	// Implement character creation logic

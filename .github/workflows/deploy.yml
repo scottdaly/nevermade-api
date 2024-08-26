@@ -35,7 +35,7 @@ jobs:
           username: nevermade-api
           key: ${{ secrets.SERVER_SSH_KEY }}
           source: "nevermade-api"
-          target: "/home/nevermade-api/nevermade-api"
+          target: "/opt/nevermade/api"
           timeout: 60s
           command_timeout: 20m
           debug: true
