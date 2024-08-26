@@ -110,7 +110,8 @@ if err := r.Run(":8080"); err != nil {
 }
 
 func handleTest(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"message": "Test successful"})
+    log.Printf("Handling test request from %s", c.ClientIP())
+    c.JSON(http.StatusOK, gin.H{"message": "Test successful"})
 }
 
 func handleGoogleLogin(c *gin.Context) {
