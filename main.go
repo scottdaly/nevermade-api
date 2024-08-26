@@ -73,6 +73,12 @@ func main() {
 	// Initialize Gin router
 	r := gin.Default()
 
+	    // Add request logging middleware
+		r.Use(func(c *gin.Context) {
+			log.Printf("Received request: %s %s", c.Request.Method, c.Request.URL.Path)
+			c.Next()
+		})
+
 	// Add CORS middleware
     r.Use(cors.New(cors.Config{
         AllowOrigins:     []string{"https://nevermade.co"},
@@ -106,44 +112,46 @@ func handleGoogleLogin(c *gin.Context) {
 }
 
 func handleGoogleCallback(c *gin.Context) {
-	log.Printf("Handling Google callback")
-	
-	var request struct {
+    log.Printf("Handling Google callback")
+    
+    var request struct {
         IDToken string `json:"idToken"`
     }
 
     if err := c.BindJSON(&request); err != nil {
         log.Printf("Error binding JSON: %v", err)
+        log.Printf("Request body: %v", c.Request.Body)
         c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
         return
     }
 
     log.Printf("Received ID token: %s", request.IDToken)
 
-	// Verify the ID token
-	payload, err := idtoken.Validate(context.Background(), request.IDToken, os.Getenv("GOOGLE_CLIENT_ID"))
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid ID token"})
-		return
-	}
+    // Verify the ID token
+    payload, err := idtoken.Validate(context.Background(), request.IDToken, os.Getenv("GOOGLE_CLIENT_ID"))
+    if err != nil {
+        log.Printf("Error validating ID token: %v", err)
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid ID token"})
+        return
+    }
 
-	// Extract user information from the payload
-	googleID := payload.Subject
-	name, _ := payload.Claims["name"].(string)
+    // Extract user information from the payload
+    googleID := payload.Subject
+    name, _ := payload.Claims["name"].(string)
 
-	// Check if user exists, if not, create new user
-	user, err := getOrCreateUser(googleID, name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process user"})
-		return
-	}
+    log.Printf("Google ID: %s, Name: %s", googleID, name)
 
-	// Return the user ID
-	c.JSON(http.StatusOK, gin.H{"message": "Authentication successful"})
+    // Check if user exists, if not, create new user
+    user, err := getOrCreateUser(googleID, name)
+    if err != nil {
+        log.Printf("Error getting or creating user: %v", err)
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process user"})
+        return
+    }
 
-	response := gin.H{"userId": user.ID}
-	log.Printf("Sending response: %+v", response)
-	c.JSON(http.StatusOK, response)
+    response := gin.H{"userId": user.ID}
+    log.Printf("Sending response: %+v", response)
+    c.JSON(http.StatusOK, response)
 }
 
 
