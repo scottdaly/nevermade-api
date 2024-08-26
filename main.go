@@ -74,14 +74,14 @@ func main() {
 	r := gin.Default()
 
 	// Add CORS middleware
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://nevermade.co"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
-	}))
+    r.Use(cors.New(cors.Config{
+        AllowOrigins:     []string{"https://nevermade.co"},
+        AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+        AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+        ExposeHeaders:    []string{"Content-Length"},
+        AllowCredentials: true,
+        MaxAge:           12 * time.Hour,
+    }))
 
 // Define routes
 r.GET("/auth/google/login", handleGoogleLogin)
@@ -89,10 +89,15 @@ r.POST("/auth/google/callback", handleGoogleCallback)
 r.POST("/character", createCharacter)
 r.GET("/characters", getCharacters)
 r.POST("/chat", chatWithCharacter)
+r.NoRoute(func(c *gin.Context) {
+	log.Printf("No route found for %s %s", c.Request.Method, c.Request.URL.Path)
+	c.JSON(404, gin.H{"error": "Route not found"})
+})
 
-// Run the server
-r.Run(":8080")
-
+log.Printf("Starting server on :8080")
+if err := r.Run(":8080"); err != nil {
+	log.Fatalf("Failed to start server: %v", err)
+}
 }
 
 func handleGoogleLogin(c *gin.Context) {
@@ -101,14 +106,19 @@ func handleGoogleLogin(c *gin.Context) {
 }
 
 func handleGoogleCallback(c *gin.Context) {
+	log.Printf("Handling Google callback")
+	
 	var request struct {
-		IDToken string `json:"idToken"`
-	}
+        IDToken string `json:"idToken"`
+    }
 
-	if err := c.BindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-		return
-	}
+    if err := c.BindJSON(&request); err != nil {
+        log.Printf("Error binding JSON: %v", err)
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+        return
+    }
+
+    log.Printf("Received ID token: %s", request.IDToken)
 
 	// Verify the ID token
 	payload, err := idtoken.Validate(context.Background(), request.IDToken, os.Getenv("GOOGLE_CLIENT_ID"))
@@ -129,7 +139,7 @@ func handleGoogleCallback(c *gin.Context) {
 	}
 
 	// Return the user ID
-	c.JSON(http.StatusOK, gin.H{"userId": user.ID})
+	c.JSON(http.StatusOK, gin.H{"message": "Authentication successful"})
 
 	response := gin.H{"userId": user.ID}
 	log.Printf("Sending response: %+v", response)
