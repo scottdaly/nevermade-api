@@ -14,7 +14,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v2
         with:
-          go-version: "1.23.0"
+          go-version: "1.23"
 
       - name: Build
         run: go build -o nevermade-api
@@ -27,6 +27,8 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           source: "nevermade-api"
           target: "/home/nevermade-api/nevermade-api"
+          timeout: 60s # Increased timeout
+          command_timeout: 20m # Increased command timeout
 
       - name: Restart Service
         uses: appleboy/ssh-action@master
@@ -36,3 +38,4 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           script: |
             sudo systemctl restart nevermade-api
+          timeout: 60s
