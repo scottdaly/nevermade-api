@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/oauth2"
@@ -31,8 +33,6 @@ func init() {
 		},
 		Endpoint: google.Endpoint,
 	}
-	var clientId = os.Getenv("GOOGLE_CLIENT_ID");
-	log.Println("clientId", clientId);
 }
 
 
@@ -72,6 +72,16 @@ func main() {
 
 	// Initialize Gin router
 	r := gin.Default()
+
+	// Add CORS middleware
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"https://nevermade.co"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	// Define routes
 	r.GET("/auth/google/login", handleGoogleLogin)
@@ -117,10 +127,14 @@ func handleGoogleCallback(c *gin.Context) {
 		return
 	}
 
-	// Here you would typically create a session or JWT for the user
-	// For simplicity, we're just returning the user ID
+	// Return the user ID
 	c.JSON(http.StatusOK, gin.H{"userId": user.ID})
+
+	response := gin.H{"userId": user.ID}
+	log.Printf("Sending response: %+v", response)
+	c.JSON(http.StatusOK, response)
 }
+
 
 // func getUserInfo(client *http.Client) (*UserInfo, error) {
 // 	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
