@@ -92,6 +92,7 @@ func main() {
 
 // Define routes
 r.GET("/auth/google/login", handleGoogleLogin)
+r.GET("/test", handleTest)
 r.GET("/api/test", handleTest)
 r.POST("/auth/google/callback", handleGoogleCallback)
 r.POST("/character", createCharacter)
