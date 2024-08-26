@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -124,26 +122,26 @@ func handleGoogleCallback(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"userId": user.ID})
 }
 
-func getUserInfo(client *http.Client) (*UserInfo, error) {
-	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+// func getUserInfo(client *http.Client) (*UserInfo, error) {
+// 	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+// 	data, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	var userInfo UserInfo
-	err = json.Unmarshal(data, &userInfo)
-	if err != nil {
-		return nil, err
-	}
+// 	var userInfo UserInfo
+// 	err = json.Unmarshal(data, &userInfo)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return &userInfo, nil
-}
+// 	return &userInfo, nil
+// }
 
 func getOrCreateUser(googleID, name string) (*User, error) {
 	var user User
