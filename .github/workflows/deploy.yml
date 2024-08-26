@@ -3,7 +3,7 @@ name: Deploy to Server
 on:
   push:
     branches:
-      - main # or your default branch name
+      - main
 
 jobs:
   deploy:
@@ -38,6 +38,7 @@ jobs:
           target: "/home/nevermade-api/nevermade-api"
           timeout: 60s
           command_timeout: 20m
+          debug: true
 
       - name: Restart Service
         uses: appleboy/ssh-action@master
