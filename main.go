@@ -1,232 +1,302 @@
 package main
 
 import (
-	"context"
-	"database/sql"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"time"
 
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	"encoding/gob"
+	"strings"
+
+	"github.com/gorilla/mux"
+	"github.com/gorilla/sessions"
+	"github.com/joho/godotenv"
+	"github.com/rs/cors"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
-	"google.golang.org/api/idtoken"
 )
 
-var (
-	db     *sql.DB
-	config *oauth2.Config
-)
-
-func init() {
-	// Initialize OAuth config
-	config = &oauth2.Config{
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		RedirectURL:  "http://localhost:8080/auth/google/callback",
-		Scopes: []string{
-			"https://www.googleapis.com/auth/userinfo.email",
-			"https://www.googleapis.com/auth/userinfo.profile",
-		},
-		Endpoint: google.Endpoint,
-	}
+// Message represents a chat message
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
+// ChatRequest represents the incoming chat request
+type ChatRequest struct {
+	Messages []Message `json:"messages"`
+}
 
+// ChatResponse represents the API response
+type ChatResponse struct {
+	Reply string `json:"reply"`
+}
 
+// AnthropicRequest represents the request structure for Anthropic API
+type AnthropicRequest struct {
+	Model     string    `json:"model"`
+	Messages  []Message `json:"messages"`
+	MaxTokens int       `json:"max_tokens"`
+}
 
-func createTables() {
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			google_id TEXT UNIQUE,
-			name TEXT
-		);
-		CREATE TABLE IF NOT EXISTS characters (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER,
-			name TEXT,
-			description TEXT,
-			FOREIGN KEY (user_id) REFERENCES users(id)
-		);
-	`)
-	if err != nil {
-		log.Fatal(err)
-	}
+// AnthropicResponse represents the response structure from Anthropic API
+type AnthropicResponse struct {
+    ID      string `json:"id"`
+    Type    string `json:"type"`
+    Role    string `json:"role"`
+    Model   string `json:"model"`
+    Content []struct {
+        Type string `json:"type"`
+        Text string `json:"text"`
+    } `json:"content"`
+    StopReason string `json:"stop_reason"`
+    Usage      struct {
+        InputTokens  int `json:"input_tokens"`
+        OutputTokens int `json:"output_tokens"`
+    } `json:"usage"`
+}
+
+const anthropicAPI = "https://api.anthropic.com/v1/messages"
+
+var (
+    googleOauthConfig *oauth2.Config
+    oauthStateString  = "random"
+    store *sessions.CookieStore
+)
+
+func getRedirectURL(r *http.Request) string {
+    origin := r.Header.Get("Origin")
+    if strings.HasPrefix(origin, "http://localhost") {
+        return "http://localhost:5173/api/callback"
+    }
+    return "https://nevermade.co/api/callback"
+}
+
+func init() {
+    err := godotenv.Load()
+    if err != nil {
+        log.Fatal("Error loading .env file")
+    }
+
+    // Initialize the sessions store
+    sessionKey := os.Getenv("SESSION_KEY")
+    if sessionKey == "" {
+        log.Fatal("SESSION_KEY must be set")
+    }
+    store = sessions.NewCookieStore([]byte(sessionKey))
+
+    // Initialize Google OAuth config
+    clientID := os.Getenv("GOOGLE_CLIENT_ID")
+    clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+    if clientID == "" || clientSecret == "" {
+        log.Fatal("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set")
+    }
+
+    googleOauthConfig = &oauth2.Config{
+        RedirectURL:  "https://nevermade.co/api/callback",
+        ClientID:     clientID,
+        ClientSecret: clientSecret,
+        Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
+        Endpoint:     google.Endpoint,
+    }
+
+    // Register complex data types for storage in sessions
+    gob.Register(map[string]interface{}{})
+}
+
+func handleGoogleLogin(w http.ResponseWriter, r *http.Request) {
+	googleOauthConfig.RedirectURL = getRedirectURL(r)
+    url := googleOauthConfig.AuthCodeURL(oauthStateString)
+    http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+}
+
+func handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
+	googleOauthConfig.RedirectURL = getRedirectURL(r)
+    content, err := getUserInfo(r.FormValue("state"), r.FormValue("code"))
+    if err != nil {
+        log.Printf("Error getting user info: %v", err)
+        http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+        return
+    }
+
+    var userInfo map[string]interface{}
+    if err := json.Unmarshal(content, &userInfo); err != nil {
+        log.Printf("Error unmarshalling user info: %v", err)
+        http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+        return
+    }
+
+    // Create a session
+    session, _ := store.Get(r, "session-name")
+    session.Values["user"] = userInfo
+    session.Save(r, w)
+
+    // Redirect based on the origin
+    if strings.HasPrefix(r.Header.Get("Origin"), "http://localhost") {
+        http.Redirect(w, r, "http://localhost:5173", http.StatusTemporaryRedirect)
+    } else {
+        http.Redirect(w, r, "https://nevermade.co", http.StatusTemporaryRedirect)
+    }
+}
+
+func handleCheckSession(w http.ResponseWriter, r *http.Request) {
+    session, _ := store.Get(r, "session-name")
+    if user, ok := session.Values["user"].(map[string]interface{}); ok {
+        json.NewEncoder(w).Encode(user)
+    } else {
+        http.Error(w, "Not logged in", http.StatusUnauthorized)
+    }
+}
+
+func getUserInfo(state string, code string) ([]byte, error) {
+    if state != oauthStateString {
+        return nil, fmt.Errorf("invalid oauth state")
+    }
+
+    token, err := googleOauthConfig.Exchange(oauth2.NoContext, code)
+    if err != nil {
+        return nil, fmt.Errorf("code exchange failed: %s", err.Error())
+    }
+
+    response, err := http.Get("https://www.googleapis.com/oauth2/v2/userinfo?access_token=" + token.AccessToken)
+    if err != nil {
+        return nil, fmt.Errorf("failed getting user info: %s", err.Error())
+    }
+
+    defer response.Body.Close()
+    contents, err := ioutil.ReadAll(response.Body)
+    if err != nil {
+        return nil, fmt.Errorf("failed reading response body: %s", err.Error())
+    }
+
+    return contents, nil
+}
+
+func handleUserInfo(w http.ResponseWriter, r *http.Request) {
+    session, _ := store.Get(r, "session-name")
+    user, ok := session.Values["user"].(map[string]interface{})
+    if !ok {
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+
+    json.NewEncoder(w).Encode(user)
+}
+
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+    session, _ := store.Get(r, "session-name")
+    session.Values["user"] = nil
+    session.Save(r, w)
+    w.WriteHeader(http.StatusOK)
+}
+
+// handleChat processes the chat request
+func handleChat(w http.ResponseWriter, r *http.Request) {
+    log.Println("Received chat request")
+
+    var req ChatRequest
+    err := json.NewDecoder(r.Body).Decode(&req)
+    if err != nil {
+        log.Printf("Error decoding request: %v", err)
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+    log.Printf("Decoded request: %+v", req)
+
+    // Prepare request for Anthropic API
+    anthropicReq := AnthropicRequest{
+        Model:     "claude-3-sonnet-20240229",
+        Messages:  req.Messages,
+        MaxTokens: 4000,
+    }
+
+    anthropicReqBody, err := json.Marshal(anthropicReq)
+    if err != nil {
+        log.Printf("Error marshaling Anthropic request: %v", err)
+        http.Error(w, "Failed to marshal Anthropic request", http.StatusInternalServerError)
+        return
+    }
+    log.Printf("Anthropic request body: %s", string(anthropicReqBody))
+
+    // Send request to Anthropic API
+    client := &http.Client{}
+    anthropicReqHttp, err := http.NewRequest("POST", anthropicAPI, bytes.NewBuffer(anthropicReqBody))
+    if err != nil {
+        log.Printf("Error creating Anthropic request: %v", err)
+        http.Error(w, "Failed to create Anthropic request", http.StatusInternalServerError)
+        return
+    }
+
+    anthropicReqHttp.Header.Set("Content-Type", "application/json")
+    anthropicReqHttp.Header.Set("x-api-key", os.Getenv("ANTHROPIC_API_KEY"))
+    anthropicReqHttp.Header.Set("anthropic-version", "2023-06-01")
+
+    log.Println("Sending request to Anthropic API")
+    anthropicResp, err := client.Do(anthropicReqHttp)
+    if err != nil {
+        log.Printf("Error sending request to Anthropic: %v", err)
+        http.Error(w, "Failed to send request to Anthropic", http.StatusInternalServerError)
+        return
+    }
+    defer anthropicResp.Body.Close()
+
+    log.Printf("Received response from Anthropic. Status: %s", anthropicResp.Status)
+    body, err := ioutil.ReadAll(anthropicResp.Body)
+    if err != nil {
+        log.Printf("Error reading Anthropic response: %v", err)
+        http.Error(w, "Failed to read Anthropic response", http.StatusInternalServerError)
+        return
+    }
+
+    log.Printf("Raw Anthropic response: %s", string(body))
+
+    var anthropicResponse AnthropicResponse
+    err = json.Unmarshal(body, &anthropicResponse)
+    if err != nil {
+        log.Printf("Error parsing Anthropic response: %v", err)
+        http.Error(w, "Failed to parse Anthropic response", http.StatusInternalServerError)
+        return
+    }
+
+    log.Printf("Parsed Anthropic response: %+v", anthropicResponse)
+
+    if len(anthropicResponse.Content) == 0 {
+        log.Println("Empty content in Anthropic response")
+        http.Error(w, "Empty response from Anthropic", http.StatusInternalServerError)
+        return
+    }
+
+    response := ChatResponse{
+        Reply: anthropicResponse.Content[0].Text,
+    }
+
+    log.Printf("Sending response: %+v", response)
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
 }
 
 func main() {
-	// Initialize SQLite database
-	var err error
-	db, err = sql.Open("sqlite3", "./nevermade.db")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
+	r := mux.NewRouter()
+	r.HandleFunc("/chat", handleChat).Methods("POST")
+	r.HandleFunc("/login", handleGoogleLogin)
+	r.HandleFunc("/callback", handleGoogleCallback)
+	r.HandleFunc("/api/user", handleUserInfo).Methods("GET")
+	r.HandleFunc("/check-session", handleCheckSession)
+	r.HandleFunc("/logout", handleLogout).Methods("POST")
 
-	// Create tables if they don't exist
-	createTables()
+	    // Create a CORS middleware
+	c := cors.New(cors.Options{
+            AllowedOrigins: []string{"https://nevermade.co"},
+            AllowedMethods: []string{"GET", "POST", "OPTIONS"},
+            AllowedHeaders: []string{"Content-Type", "Authorization"},
+	})
 
-	// Initialize Gin router
-	r := gin.Default()
-	r.Use(gin.Logger())
+	handler := c.Handler(r)
 
-	    // Add request logging middleware
-		r.Use(func(c *gin.Context) {
-			log.Printf("Received request: %s %s", c.Request.Method, c.Request.URL.Path)
-			c.Next()
-		})
-
-	// Add CORS middleware
-    r.Use(cors.New(cors.Config{
-        AllowOrigins:     []string{"https://nevermade.co"},
-        AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-        AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-        ExposeHeaders:    []string{"Content-Length"},
-        AllowCredentials: true,
-        MaxAge:           12 * time.Hour,
-    }))
-
-// Define routes
-r.GET("/auth/google/login", handleGoogleLogin)
-r.GET("/test", handleTest)
-r.GET("/api/test", handleTest)
-r.POST("/auth/google/callback", handleGoogleCallback)
-r.POST("/character", createCharacter)
-r.GET("/characters", getCharacters)
-r.POST("/chat", chatWithCharacter)
-r.NoRoute(func(c *gin.Context) {
-	log.Printf("No route found for %s %s", c.Request.Method, c.Request.URL.Path)
-	c.JSON(404, gin.H{"error": "Route not found"})
-})
-
-log.Printf("Starting server on :8080")
-if err := r.Run(":8080"); err != nil {
-	log.Fatalf("Failed to start server: %v", err)
-}
-}
-
-func handleTest(c *gin.Context) {
-    log.Printf("Handling test request from %s", c.ClientIP())
-    c.JSON(http.StatusOK, gin.H{"message": "Test successful"})
-}
-
-func handleGoogleLogin(c *gin.Context) {
-	url := config.AuthCodeURL("state", oauth2.AccessTypeOffline)
-	c.Redirect(http.StatusTemporaryRedirect, url)
-}
-
-func handleGoogleCallback(c *gin.Context) {
-    log.Printf("Handling Google callback")
-    
-    var request struct {
-        IDToken string `json:"idToken"`
-    }
-
-    if err := c.BindJSON(&request); err != nil {
-        log.Printf("Error binding JSON: %v", err)
-        log.Printf("Request body: %v", c.Request.Body)
-        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
-        return
-    }
-
-    log.Printf("Received ID token: %s", request.IDToken)
-
-    // Verify the ID token
-    payload, err := idtoken.Validate(context.Background(), request.IDToken, os.Getenv("GOOGLE_CLIENT_ID"))
-    if err != nil {
-        log.Printf("Error validating ID token: %v", err)
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid ID token"})
-        return
-    }
-
-    // Extract user information from the payload
-    googleID := payload.Subject
-    name, _ := payload.Claims["name"].(string)
-
-    log.Printf("Google ID: %s, Name: %s", googleID, name)
-
-    // Check if user exists, if not, create new user
-    user, err := getOrCreateUser(googleID, name)
-    if err != nil {
-        log.Printf("Error getting or creating user: %v", err)
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process user"})
-        return
-    }
-
-    response := gin.H{"userId": user.ID}
-    log.Printf("Sending response: %+v", response)
-    c.JSON(http.StatusOK, response)
-}
-
-// func getUserInfo(client *http.Client) (*UserInfo, error) {
-// 	resp, err := client.Get("https://www.googleapis.com/oauth2/v3/userinfo")
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	defer resp.Body.Close()
-
-// 	data, err := io.ReadAll(resp.Body)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	var userInfo UserInfo
-// 	err = json.Unmarshal(data, &userInfo)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return &userInfo, nil
-// }
-
-func getOrCreateUser(googleID, name string) (*User, error) {
-	var user User
-	err := db.QueryRow("SELECT id, google_id, name FROM users WHERE google_id = ?", googleID).Scan(&user.ID, &user.GoogleID, &user.Name)
-	if err == sql.ErrNoRows {
-		// User doesn't exist, create new user
-		result, err := db.Exec("INSERT INTO users (google_id, name) VALUES (?, ?)", googleID, name)
-		if err != nil {
-			return nil, err
-		}
-		id, err := result.LastInsertId()
-		if err != nil {
-			return nil, err
-		}
-		user = User{ID: id, GoogleID: googleID, Name: name}
-	} else if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-type UserInfo struct {
-	ID    string `json:"sub"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-}
-
-type User struct {
-	ID       int64
-	GoogleID string
-	Name     string
-}
-
-
-func createCharacter(c *gin.Context) {
-	// Implement character creation logic
-	c.JSON(http.StatusOK, gin.H{"message": "Character created successfully"})
-}
-
-func getCharacters(c *gin.Context) {
-	// Implement fetching characters logic
-	c.JSON(http.StatusOK, gin.H{"message": "Characters fetched successfully"})
-}
-
-func chatWithCharacter(c *gin.Context) {
-	// Implement chat functionality
-	c.JSON(http.StatusOK, gin.H{"message": "Chat message sent successfully"})
+	log.Println("Server starting on localhost:8080")
+	log.Fatal(http.ListenAndServe("localhost:8080", handler))
 }
