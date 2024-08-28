@@ -18,6 +18,10 @@ import (
 	"github.com/rs/cors"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+
+	"database/sql"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // Message represents a chat message
@@ -66,7 +70,30 @@ var (
     googleOauthConfig *oauth2.Config
     oauthStateString  = "random"
     store *sessions.CookieStore
+	db *sql.DB
 )
+
+// New types for database entities
+type Character struct {
+	ID          int    `json:"id"`
+	UserID      string `json:"user_id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+type Conversation struct {
+	ID          int    `json:"id"`
+	UserID      string `json:"user_id"`
+	CharacterID int    `json:"character_id"`
+	Title       string `json:"title"`
+}
+
+type ConversationMessage struct {
+	ID             int    `json:"id"`
+	ConversationID int    `json:"conversation_id"`
+	Role           string `json:"role"`
+	Content        string `json:"content"`
+}
 
 func getRedirectURL(r *http.Request) string {
     origin := r.Header.Get("Origin")
@@ -106,6 +133,50 @@ func init() {
 
     // Register complex data types for storage in sessions
     gob.Register(map[string]interface{}{})
+
+	// Initialize SQLite database
+	db, err = sql.Open("sqlite3", "./nevermade.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create tables if they don't exist
+	createTables()
+}
+
+func createTables() {
+	// Create characters table
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS characters (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT,
+		name TEXT,
+		description TEXT
+	)`)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create conversations table
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS conversations (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT,
+		character_id INTEGER,
+		title TEXT
+	)`)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create conversation_messages table
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS conversation_messages (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		conversation_id INTEGER,
+		role TEXT,
+		content TEXT
+	)`)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func handleGoogleLogin(w http.ResponseWriter, r *http.Request) {
@@ -277,6 +348,86 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
     log.Printf("Sending response: %+v", response)
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(response)
+
+	// After getting the response from Anthropic API
+	// Save the message to the database
+	conversationID := r.URL.Query().Get("conversation_id")
+	_, err = db.Exec("INSERT INTO conversation_messages (conversation_id, role, content) VALUES (?, ?, ?)",
+		conversationID, "assistant", response.Reply)
+	if err != nil {
+		log.Printf("Error saving message to database: %v", err)
+	}
+}
+
+func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
+	// Get user from session
+	session, _ := store.Get(r, "session-name")
+	user, ok := session.Values["user"].(map[string]interface{})
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var character Character
+	err := json.NewDecoder(r.Body).Decode(&character)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	character.UserID = user["id"].(string)
+
+	result, err := db.Exec("INSERT INTO characters (user_id, name, description) VALUES (?, ?, ?)",
+		character.UserID, character.Name, character.Description)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	character.ID = int(id)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(character)
+}
+
+func handleGetCharacters(w http.ResponseWriter, r *http.Request) {
+	// Get user from session
+	session, _ := store.Get(r, "session-name")
+	user, ok := session.Values["user"].(map[string]interface{})
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	rows, err := db.Query("SELECT id, name, description FROM characters WHERE user_id = ?", user["id"].(string))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var characters []Character
+	for rows.Next() {
+		var c Character
+		err := rows.Scan(&c.ID, &c.Name, &c.Description)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		characters = append(characters, c)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(characters)
+}
+
+func handleCreateConversation(w http.ResponseWriter, r *http.Request) {
+	// ... similar to handleCreateCharacter, but for conversations
+}
+
+func handleGetConversations(w http.ResponseWriter, r *http.Request) {
+	// ... similar to handleGetCharacters, but for conversations
 }
 
 func main() {
@@ -287,6 +438,10 @@ func main() {
 	r.HandleFunc("/api/user", handleUserInfo).Methods("GET")
 	r.HandleFunc("/check-session", handleCheckSession)
 	r.HandleFunc("/logout", handleLogout).Methods("POST")
+	r.HandleFunc("/characters", handleCreateCharacter).Methods("POST")
+	r.HandleFunc("/characters", handleGetCharacters).Methods("GET")
+	r.HandleFunc("/conversations", handleCreateConversation).Methods("POST")
+	r.HandleFunc("/conversations", handleGetConversations).Methods("GET")
 
 	    // Create a CORS middleware
 	c := cors.New(cors.Options{
