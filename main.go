@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -168,7 +168,7 @@ func getUserInfo(state string, code string) ([]byte, error) {
     }
 
     defer response.Body.Close()
-    contents, err := ioutil.ReadAll(response.Body)
+    contents, err := io.ReadAll(response.Body)
     if err != nil {
         return nil, fmt.Errorf("failed reading response body: %s", err.Error())
     }
@@ -245,7 +245,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
     defer anthropicResp.Body.Close()
 
     log.Printf("Received response from Anthropic. Status: %s", anthropicResp.Status)
-    body, err := ioutil.ReadAll(anthropicResp.Body)
+    body, err := io.ReadAll(anthropicResp.Body)
     if err != nil {
         log.Printf("Error reading Anthropic response: %v", err)
         http.Error(w, "Failed to read Anthropic response", http.StatusInternalServerError)
