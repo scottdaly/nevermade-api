@@ -79,6 +79,7 @@ type Character struct {
 	UserID      string `json:"user_id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	ImageURL    string `json:"image_url"`
 }
 
 type Conversation struct {
@@ -150,7 +151,8 @@ func createTables() {
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		user_id TEXT,
 		name TEXT,
-		description TEXT
+		description TEXT,
+		image_url TEXT
 	)`)
 	if err != nil {
 		log.Fatal(err)
@@ -377,8 +379,8 @@ func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
 
 	character.UserID = user["id"].(string)
 
-	result, err := db.Exec("INSERT INTO characters (user_id, name, description) VALUES (?, ?, ?)",
-		character.UserID, character.Name, character.Description)
+	result, err := db.Exec("INSERT INTO characters (user_id, name, description, image_url) VALUES (?, ?, ?, ?)",
+		character.UserID, character.Name, character.Description, character.ImageURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -400,7 +402,7 @@ func handleGetCharacters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query("SELECT id, name, description FROM characters WHERE user_id = ?", user["id"].(string))
+	rows, err := db.Query("SELECT id, name, description, image_url FROM characters WHERE user_id = ?", user["id"].(string))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -410,7 +412,7 @@ func handleGetCharacters(w http.ResponseWriter, r *http.Request) {
 	var characters []Character
 	for rows.Next() {
 		var c Character
-		err := rows.Scan(&c.ID, &c.Name, &c.Description)
+		err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.ImageURL)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
