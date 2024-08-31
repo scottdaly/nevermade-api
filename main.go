@@ -423,11 +423,122 @@ func handleGetCharacters(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCreateConversation(w http.ResponseWriter, r *http.Request) {
-	// ... similar to handleCreateCharacter, but for conversations
+	// Get user from session
+	session, _ := store.Get(r, "session-name")
+	user, ok := session.Values["user"].(map[string]interface{})
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var conversation Conversation
+	err := json.NewDecoder(r.Body).Decode(&conversation)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	conversation.UserID = user["id"].(string)
+
+	result, err := db.Exec("INSERT INTO conversations (user_id, character_id, title) VALUES (?, ?, ?)",
+		conversation.UserID, conversation.CharacterID, conversation.Title)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	id, _ := result.LastInsertId()
+	conversation.ID = int(id)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(conversation)
 }
 
 func handleGetConversations(w http.ResponseWriter, r *http.Request) {
-	// ... similar to handleGetCharacters, but for conversations
+	// Get user from session
+	session, _ := store.Get(r, "session-name")
+	user, ok := session.Values["user"].(map[string]interface{})
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT c.id, c.character_id, c.title, ch.name AS character_name 
+		FROM conversations c
+		JOIN characters ch ON c.character_id = ch.id
+		WHERE c.user_id = ?`, user["id"].(string))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type ConversationWithCharacter struct {
+		Conversation
+		CharacterName string `json:"character_name"`
+	}
+
+	var conversations []ConversationWithCharacter
+	for rows.Next() {
+		var c ConversationWithCharacter
+		err := rows.Scan(&c.ID, &c.CharacterID, &c.Title, &c.CharacterName)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		conversations = append(conversations, c)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(conversations)
+}
+
+func handleGetConversationMessages(w http.ResponseWriter, r *http.Request) {
+	// Get user from session
+	session, _ := store.Get(r, "session-name")
+	user, ok := session.Values["user"].(map[string]interface{})
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	vars := mux.Vars(r)
+	conversationID := vars["id"]
+
+	// Verify that the conversation belongs to the user
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM conversations WHERE id = ? AND user_id = ?", 
+		conversationID, user["id"].(string)).Scan(&count)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if count == 0 {
+		http.Error(w, "Conversation not found or unauthorized", http.StatusNotFound)
+		return
+	}
+
+	rows, err := db.Query("SELECT id, role, content FROM conversation_messages WHERE conversation_id = ? ORDER BY id", conversationID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var messages []ConversationMessage
+	for rows.Next() {
+		var m ConversationMessage
+		err := rows.Scan(&m.ID, &m.Role, &m.Content)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		messages = append(messages, m)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(messages)
 }
 
 func main() {
@@ -440,8 +551,9 @@ func main() {
 	r.HandleFunc("/logout", handleLogout).Methods("POST")
 	r.HandleFunc("/characters", handleCreateCharacter).Methods("POST")
 	r.HandleFunc("/characters", handleGetCharacters).Methods("GET")
-	r.HandleFunc("/conversations", handleCreateConversation).Methods("POST")
-	r.HandleFunc("/conversations", handleGetConversations).Methods("GET")
+    r.HandleFunc("/conversations", handleCreateConversation).Methods("POST")
+    r.HandleFunc("/conversations", handleGetConversations).Methods("GET")
+    r.HandleFunc("/conversations/{id}/messages", handleGetConversationMessages).Methods("GET")
 
 	    // Create a CORS middleware
 	c := cors.New(cors.Options{
