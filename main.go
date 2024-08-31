@@ -344,7 +344,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
     }
 
     response := ChatResponse{
-        Reply: anthropicResponse.Content[0].Text,
+        Reply: "Gooood " + anthropicResponse.Content[0].Text,
     }
 
     log.Printf("Sending response: %+v", response)
@@ -362,13 +362,17 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
+	log.Println("Handling create character request")
+
 	// Get user from session
 	session, _ := store.Get(r, "session-name")
 	user, ok := session.Values["user"].(map[string]interface{})
 	if !ok {
+		log.Println("User not found in session")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	log.Printf("User ID from session: %v", user["id"])
 
 	var character Character
 	err := json.NewDecoder(r.Body).Decode(&character)
@@ -377,9 +381,11 @@ func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid character data", http.StatusBadRequest)
 		return
 	}
+	log.Printf("Decoded character: %+v", character)
 
 	character.UserID = user["id"].(string)
 
+	log.Println("Attempting to insert character into database")
 	result, err := db.Exec("INSERT INTO characters (user_id, name, description, image_url) VALUES (?, ?, ?, ?)",
 		character.UserID, character.Name, character.Description, character.ImageURL)
 	if err != nil {
@@ -395,6 +401,7 @@ func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	character.ID = int(id)
+	log.Printf("Character created with ID: %d", character.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(character)
@@ -403,6 +410,7 @@ func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 		return
 	}
+	log.Println("Character creation successful")
 }
 
 func handleGetCharacters(w http.ResponseWriter, r *http.Request) {
@@ -575,6 +583,22 @@ func main() {
             AllowedMethods: []string{"GET", "POST", "OPTIONS"},
             AllowedHeaders: []string{"Content-Type", "Authorization"},
 	})
+
+    	// Print database schema
+	rows, err := db.Query("SELECT sql FROM sqlite_master WHERE type='table'")
+	if err != nil {
+		log.Fatalf("Error querying database schema: %v", err)
+	}
+	defer rows.Close()
+
+	log.Println("Database Schema:")
+	for rows.Next() {
+		var sql string
+		if err := rows.Scan(&sql); err != nil {
+			log.Fatalf("Error scanning row: %v", err)
+		}
+		log.Println(sql)
+	}
 
 	handler := c.Handler(r)
 
