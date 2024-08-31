@@ -517,50 +517,66 @@ func handleGetConversations(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleGetConversationMessages(w http.ResponseWriter, r *http.Request) {
-	// Get user from session
-	session, _ := store.Get(r, "session-name")
-	user, ok := session.Values["user"].(map[string]interface{})
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
+    log.Println("Handling get conversation messages request")
 
-	vars := mux.Vars(r)
-	conversationID := vars["id"]
+    // Get user from session
+    session, _ := store.Get(r, "session-name")
+    user, ok := session.Values["user"].(map[string]interface{})
+    if !ok {
+        log.Println("User not found in session")
+        http.Error(w, "Unauthorized", http.StatusUnauthorized)
+        return
+    }
+    log.Printf("User ID from session: %v", user["id"])
 
-	// Verify that the conversation belongs to the user
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM conversations WHERE id = ? AND user_id = ?", 
-		conversationID, user["id"].(string)).Scan(&count)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if count == 0 {
-		http.Error(w, "Conversation not found or unauthorized", http.StatusNotFound)
-		return
-	}
+    vars := mux.Vars(r)
+    conversationID := vars["id"]
+    log.Printf("Fetching messages for conversation ID: %s", conversationID)
 
-	rows, err := db.Query("SELECT id, role, content FROM conversation_messages WHERE conversation_id = ? ORDER BY id", conversationID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
+    // Verify that the conversation belongs to the user
+    var count int
+    err := db.QueryRow("SELECT COUNT(*) FROM conversations WHERE id = ? AND user_id = ?", 
+        conversationID, user["id"].(string)).Scan(&count)
+    if err != nil {
+        log.Printf("Error checking conversation ownership: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    if count == 0 {
+        log.Printf("Conversation not found or unauthorized for user %s", user["id"])
+        http.Error(w, "Conversation not found or unauthorized", http.StatusNotFound)
+        return
+    }
 
-	var messages []ConversationMessage
-	for rows.Next() {
-		var m ConversationMessage
-		err := rows.Scan(&m.ID, &m.Role, &m.Content)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		messages = append(messages, m)
-	}
+    rows, err := db.Query("SELECT id, role, content FROM conversation_messages WHERE conversation_id = ? ORDER BY id", conversationID)
+    if err != nil {
+        log.Printf("Error querying conversation messages: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(messages)
+    var messages []ConversationMessage
+    for rows.Next() {
+        var m ConversationMessage
+        err := rows.Scan(&m.ID, &m.Role, &m.Content)
+        if err != nil {
+            log.Printf("Error scanning message row: %v", err)
+            http.Error(w, "Internal server error", http.StatusInternalServerError)
+            return
+        }
+        messages = append(messages, m)
+    }
+
+    log.Printf("Retrieved %d messages for conversation %s", len(messages), conversationID)
+
+    w.Header().Set("Content-Type", "application/json")
+    if err := json.NewEncoder(w).Encode(messages); err != nil {
+        log.Printf("Error encoding messages to JSON: %v", err)
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    log.Println("Successfully sent conversation messages")
 }
 
 func main() {
