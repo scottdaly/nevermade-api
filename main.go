@@ -518,6 +518,8 @@ func handleGetConversations(w http.ResponseWriter, r *http.Request) {
 
 func handleGetConversationMessages(w http.ResponseWriter, r *http.Request) {
     log.Println("Handling get conversation messages request")
+    log.Printf("Request URL: %s", r.URL.String())
+    log.Printf("Request Headers: %v", r.Header)
 
     // Get user from session
     session, _ := store.Get(r, "session-name")
