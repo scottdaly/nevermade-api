@@ -373,7 +373,8 @@ func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
 	var character Character
 	err := json.NewDecoder(r.Body).Decode(&character)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		log.Printf("Error decoding character data: %v", err)
+		http.Error(w, "Invalid character data", http.StatusBadRequest)
 		return
 	}
 
@@ -382,15 +383,26 @@ func handleCreateCharacter(w http.ResponseWriter, r *http.Request) {
 	result, err := db.Exec("INSERT INTO characters (user_id, name, description, image_url) VALUES (?, ?, ?, ?)",
 		character.UserID, character.Name, character.Description, character.ImageURL)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Error inserting character into database: %v", err)
+		http.Error(w, "Failed to create character", http.StatusInternalServerError)
 		return
 	}
 
-	id, _ := result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		log.Printf("Error getting last insert ID: %v", err)
+		http.Error(w, "Failed to get character ID", http.StatusInternalServerError)
+		return
+	}
 	character.ID = int(id)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(character)
+	err = json.NewEncoder(w).Encode(character)
+	if err != nil {
+		log.Printf("Error encoding character response: %v", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func handleGetCharacters(w http.ResponseWriter, r *http.Request) {
